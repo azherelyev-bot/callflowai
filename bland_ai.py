@@ -398,79 +398,97 @@ def run_mock_demo() -> dict:
     This function imports servicetitan_client here (rather than at module
     level) to keep bland_ai.py usable as a standalone module without
     requiring the ServiceTitan client to be configured.
+
+    IMPORTANT: This function forces MOCK_MODE=true for its duration so the
+    demo always works — even on Railway where .env isn't deployed and env
+    vars may not be configured yet.
     """
     # Local import so bland_ai.py doesn't hard-depend on servicetitan_client
     # at module load time — keeps it testable in isolation.
     import servicetitan_client as st
 
+    # Force mock mode on for the demo, then restore the original value.
+    # Without this, the demo crashes on Railway if MOCK_MODE isn't set
+    # in the dashboard (because .env is gitignored and not deployed).
+    original_mock = os.environ.get("MOCK_MODE")
+    os.environ["MOCK_MODE"] = "true"
+
     now = datetime.now().isoformat()
 
-    # -- Step 1: Incoming call data ------------------------------------------
-    # This is what the telephony system sends us when a homeowner calls.
-    call_data = {
-        "caller_name": "Jane Doe",
-        "phone_number": "555-123-4567",
-        "service_type": "HVAC Repair",
-        "zip_code": "37209",
-    }
+    try:
+        # -- Step 1: Incoming call data --------------------------------------
+        # This is what the telephony system sends us when a homeowner calls.
+        call_data = {
+            "caller_name": "Jane Doe",
+            "phone_number": "555-123-4567",
+            "service_type": "HVAC Repair",
+            "zip_code": "37209",
+        }
 
-    # -- Step 2: Bland AI initiates a callback to the customer ---------------
-    # In mock mode this returns a fake call_id and "queued" status instantly.
-    bland_result = handle_inbound_call(**call_data)
+        # -- Step 2: Bland AI initiates a callback to the customer -----------
+        # In mock mode this returns a fake call_id and "queued" status.
+        bland_result = handle_inbound_call(**call_data)
 
-    # -- Step 3: Simulate the completed voice conversation -------------------
-    # In mock mode, get_call_summary returns Aria's full 9-turn transcript
-    # where she books Jane Doe for HVAC Repair on March 25th at 10 AM.
-    call_summary = get_call_summary(bland_result["call_id"])
+        # -- Step 3: Simulate the completed voice conversation ---------------
+        # In mock mode, get_call_summary returns Aria's full 9-turn transcript
+        # where she books Jane Doe for HVAC Repair on March 25th at 10 AM.
+        call_summary = get_call_summary(bland_result["call_id"])
 
-    # -- Step 4: Book the appointment in ServiceTitan ------------------------
-    # create_booking pushes the job into ServiceTitan's dispatch board.
-    # In mock mode it returns a realistic confirmation with a ST-XXXXXXXX id.
-    booking = st.create_booking(
-        caller_name=call_summary["caller_name"],
-        phone_number=call_data["phone_number"],
-        service_type=call_summary["service_requested"],
-        zip_code=call_data["zip_code"],
-        appointment_time=call_summary["appointment_time"],
-    )
+        # -- Step 4: Book the appointment in ServiceTitan --------------------
+        # create_booking pushes the job into ServiceTitan's dispatch board.
+        # In mock mode it returns a realistic confirmation with ST-XXXXXXXX.
+        booking = st.create_booking(
+            caller_name=call_summary["caller_name"],
+            phone_number=call_data["phone_number"],
+            service_type=call_summary["service_requested"],
+            zip_code=call_data["zip_code"],
+            appointment_time=call_summary["appointment_time"],
+        )
 
-    # -- Step 5: Assemble the full pipeline summary --------------------------
-    return {
-        "demo": True,
-        "pipeline_summary": (
-            "Complete flow: call received → Aria called back → "
-            "lead qualified → appointment booked in ServiceTitan"
-        ),
-        "steps": {
-            "1_call_received": {
-                "timestamp": now,
-                "description": "Homeowner calls the contractor's business line.",
-                "caller": call_data,
+        # -- Step 5: Assemble the full pipeline summary ----------------------
+        return {
+            "demo": True,
+            "pipeline_summary": (
+                "Complete flow: call received → Aria called back → "
+                "lead qualified → appointment booked in ServiceTitan"
+            ),
+            "steps": {
+                "1_call_received": {
+                    "timestamp": now,
+                    "description": "Homeowner calls the contractor's business line.",
+                    "caller": call_data,
+                },
+                "2_bland_ai_triggered": {
+                    "description": "Bland AI initiates callback — Aria dials the customer.",
+                    "call_id": bland_result["call_id"],
+                    "status": bland_result["status"],
+                    "message": "Aria is calling Jane Doe back...",
+                },
+                "3_voice_conversation": {
+                    "description": (
+                        "Aria greets the caller, confirms service details and "
+                        "address, checks availability, and books the appointment."
+                    ),
+                    "duration_seconds": call_summary["call_duration_seconds"],
+                    "outcome": call_summary["outcome"],
+                    "transcript": call_summary["transcript"],
+                },
+                "4_appointment_booked": {
+                    "description": (
+                        "Appointment created in ServiceTitan — shows on the "
+                        "dispatch board and triggers technician assignment."
+                    ),
+                    "servicetitan_booking": booking,
+                    "confirmation_number": booking.get("confirmation_number"),
+                    "appointment_time": call_summary["appointment_time"],
+                    "technician": booking.get("technician"),
+                },
             },
-            "2_bland_ai_triggered": {
-                "description": "Bland AI initiates callback — Aria dials the customer.",
-                "call_id": bland_result["call_id"],
-                "status": bland_result["status"],
-                "message": "Aria is calling Jane Doe back...",
-            },
-            "3_voice_conversation": {
-                "description": (
-                    "Aria greets the caller, confirms service details and "
-                    "address, checks availability, and books the appointment."
-                ),
-                "duration_seconds": call_summary["call_duration_seconds"],
-                "outcome": call_summary["outcome"],
-                "transcript": call_summary["transcript"],
-            },
-            "4_appointment_booked": {
-                "description": (
-                    "Appointment created in ServiceTitan — shows on the "
-                    "dispatch board and triggers technician assignment."
-                ),
-                "servicetitan_booking": booking,
-                "confirmation_number": booking.get("confirmation_number"),
-                "appointment_time": call_summary["appointment_time"],
-                "technician": booking.get("technician"),
-            },
-        },
-    }
+        }
+    finally:
+        # Restore the original MOCK_MODE value so we don't affect other
+        # endpoints that may legitimately use live API credentials.
+        if original_mock is None:
+            os.environ.pop("MOCK_MODE", None)
+        else:
+            os.environ["MOCK_MODE"] = original_mock
