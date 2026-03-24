@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin Login | CallFlow AI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: { 50: '#eff6ff', 100: '#dbeafe', 200: '#bfdbfe', 300: '#93c5fd', 400: '#60a5fa', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8', 800: '#1e40af', 900: '#1e3a8a' },
+                        accent: { 50: '#ecfdf5', 100: '#d1fae5', 200: '#a7f3d0', 300: '#6ee7b7', 400: '#34d399', 500: '#10b981', 600: '#059669', 700: '#047857', 800: '#065f46', 900: '#064e3b' },
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body { background: linear-gradient(135deg, #1e3a8a 0%, #1d4ed8 40%, #059669 100%); }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center px-4">
+    <div class="w-full max-w-md">
+        <!-- Logo -->
+        <div class="text-center mb-8">
+            <div class="inline-flex items-center gap-2">
+                <div class="w-10 h-10 rounded-xl bg-white/20 backdrop-blur flex items-center justify-center">
+                    <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
+                </div>
+                <span class="text-2xl font-bold text-white">CallFlow<span class="text-accent-300">AI</span></span>
+            </div>
+            <p class="text-blue-200 text-sm mt-2">Admin Dashboard</p>
+        </div>
+
+        <!-- Login card -->
+        <div class="bg-white rounded-2xl shadow-2xl p-8">
+            <h2 class="text-xl font-bold text-gray-900 mb-1">Welcome back</h2>
+            <p class="text-sm text-gray-500 mb-6">Sign in to access your dashboard.</p>
+
+            {% if error %}
+            <div class="mb-4 px-4 py-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
+                {{ error }}
+            </div>
+            {% endif %}
+
+            <form method="POST" action="/admin/login">
+                <div class="mb-4">
+                    <label for="username" class="block text-sm font-medium text-gray-700 mb-1">Username</label>
+                    <input type="text" id="username" name="username" required autofocus
+                           class="w-full px-4 py-2.5 rounded-lg border border-gray-300 text-gray-900 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all"
+                           placeholder="Enter your username">
+                </div>
+                <div class="mb-6">
+                    <label for="password" class="block text-sm font-medium text-gray-700 mb-1">Password</label>
+                    <input type="password" id="password" name="password" required
+                           class="w-full px-4 py-2.5 rounded-lg border border-gray-300 text-gray-900 focus:ring-2 focus:ring-primary-500 focus:border-primary-500 outline-none transition-all"
+                           placeholder="Enter your password">
+                </div>
+                <button type="submit"
+                        class="w-full py-3 rounded-lg bg-primary-600 text-white font-semibold hover:bg-primary-700 transition-colors shadow-lg shadow-primary-600/25">
+                    Sign In
+                </button>
+            </form>
+        </div>
+
+        <p class="text-center text-blue-200 text-xs mt-6">&copy; 2026 CallFlow AI. All rights reserved.</p>
+    </div>
+</body>
+</html>

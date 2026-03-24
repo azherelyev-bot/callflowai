@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Dashboard | CallFlow AI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        primary: { 50: '#eff6ff', 100: '#dbeafe', 200: '#bfdbfe', 300: '#93c5fd', 400: '#60a5fa', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8', 800: '#1e40af', 900: '#1e3a8a' },
+                        accent: { 50: '#ecfdf5', 100: '#d1fae5', 200: '#a7f3d0', 300: '#6ee7b7', 400: '#34d399', 500: '#10b981', 600: '#059669', 700: '#047857', 800: '#065f46', 900: '#064e3b' },
+                    }
+                }
+            }
+        }
+    </script>
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <!-- Top navigation bar -->
+    <nav class="bg-white border-b border-gray-200">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center gap-2">
+                    <div class="w-8 h-8 rounded-lg bg-gradient-to-br from-primary-600 to-accent-500 flex items-center justify-center">
+                        <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
+                    </div>
+                    <span class="text-lg font-bold text-gray-900">CallFlow<span class="text-primary-600">AI</span></span>
+                    <span class="ml-3 text-xs font-medium text-gray-400 uppercase tracking-wider">Admin Dashboard</span>
+                </div>
+                <div class="flex items-center gap-4">
+                    <span class="text-sm text-gray-500">{{ date }}</span>
+                    <a href="/admin/logout"
+                       class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-gray-200 text-sm text-gray-600 font-medium hover:bg-gray-50 hover:border-gray-300 transition-all">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
+                        Logout
+                    </a>
+                </div>
+            </div>
+        </div>
+    </nav>
+
+    <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <!-- Stats cards -->
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+            <!-- Total Calls -->
+            <div class="bg-white rounded-xl border border-gray-200 p-6">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-sm font-medium text-gray-500">Total Calls Today</span>
+                    <div class="w-9 h-9 rounded-lg bg-primary-50 flex items-center justify-center">
+                        <svg class="w-5 h-5 text-primary-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z"/></svg>
+                    </div>
+                </div>
+                <p class="text-3xl font-extrabold text-gray-900">{{ total_calls }}</p>
+            </div>
+            <!-- Appointments Booked -->
+            <div class="bg-white rounded-xl border border-gray-200 p-6">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-sm font-medium text-gray-500">Appointments Booked</span>
+                    <div class="w-9 h-9 rounded-lg bg-accent-50 flex items-center justify-center">
+                        <svg class="w-5 h-5 text-accent-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
+                    </div>
+                </div>
+                <p class="text-3xl font-extrabold text-gray-900">{{ appointments_booked }}</p>
+            </div>
+            <!-- Conversion Rate -->
+            <div class="bg-white rounded-xl border border-gray-200 p-6">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-sm font-medium text-gray-500">Conversion Rate</span>
+                    <div class="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center">
+                        <svg class="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"/></svg>
+                    </div>
+                </div>
+                <p class="text-3xl font-extrabold text-gray-900">{{ conversion_rate }}%</p>
+            </div>
+            <!-- Calls Missed -->
+            <div class="bg-white rounded-xl border border-gray-200 p-6">
+                <div class="flex items-center justify-between mb-3">
+                    <span class="text-sm font-medium text-gray-500">Calls Missed</span>
+                    <div class="w-9 h-9 rounded-lg bg-red-50 flex items-center justify-center">
+                        <svg class="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 8l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2M5 3a2 2 0 00-2 2v1c0 8.284 6.716 15 15 15h1a2 2 0 002-2v-3.28a1 1 0 00-.684-.948l-4.493-1.498a1 1 0 00-1.21.502l-1.13 2.257a11.042 11.042 0 01-5.516-5.516l2.257-1.13a1 1 0 00.502-1.21L8.228 3.684A1 1 0 007.28 3H5z"/></svg>
+                    </div>
+                </div>
+                <p class="text-3xl font-extrabold text-gray-900">{{ calls_missed }}</p>
+            </div>
+        </div>
+
+        <!-- Two-column layout: Call log + Demo -->
+        <div class="grid lg:grid-cols-2 gap-8">
+            <!-- Recent Calls -->
+            <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                <div class="px-6 py-4 border-b border-gray-100">
+                    <h3 class="text-base font-semibold text-gray-900">Today's Calls</h3>
+                </div>
+                <div class="divide-y divide-gray-50">
+                    {% if calls %}
+                        {% for call in calls %}
+                        <div class="px-6 py-4 flex items-center justify-between">
+                            <div>
+                                <p class="text-sm font-semibold text-gray-900">{{ call.caller_name }}</p>
+                                <p class="text-xs text-gray-500">{{ call.service_type }} &middot; {{ call.zip_code }}</p>
+                            </div>
+                            <div class="text-right">
+                                {% if call.status == "booked" %}
+                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-accent-50 text-accent-700">Booked</span>
+                                {% elif call.status == "in_progress" %}
+                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">In Progress</span>
+                                {% else %}
+                                <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-50 text-red-700">Missed</span>
+                                {% endif %}
+                                <p class="text-xs text-gray-400 mt-0.5">{{ call.phone_number }}</p>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="px-6 py-12 text-center">
+                            <p class="text-sm text-gray-400">No calls yet today.</p>
+                            <p class="text-xs text-gray-400 mt-1">Run the demo to generate sample data.</p>
+                        </div>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Demo Pipeline -->
+            <div class="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between">
+                    <h3 class="text-base font-semibold text-gray-900">Live Demo Pipeline</h3>
+                    <button onclick="runDemo()"
+                            id="demo-btn"
+                            class="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-primary-600 text-white text-sm font-medium hover:bg-primary-700 transition-colors shadow-sm">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+                        Run Demo
+                    </button>
+                </div>
+                <div id="demo-output" class="px-6 py-6">
+                    <div id="demo-placeholder" class="text-center py-8">
+                        <div class="w-16 h-16 mx-auto rounded-full bg-gray-100 flex items-center justify-center mb-3">
+                            <svg class="w-8 h-8 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/></svg>
+                        </div>
+                        <p class="text-sm text-gray-400">Click "Run Demo" to simulate the full pipeline.</p>
+                        <p class="text-xs text-gray-400 mt-1">Incoming call &rarr; Aria conversation &rarr; ServiceTitan booking</p>
+                    </div>
+                    <div id="demo-result" class="hidden space-y-4"></div>
+                    <div id="demo-loading" class="hidden text-center py-8">
+                        <div class="inline-flex items-center gap-2 text-sm text-primary-600">
+                            <svg class="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+                            Running pipeline...
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <script>
+    async function runDemo() {
+        const btn = document.getElementById('demo-btn');
+        const placeholder = document.getElementById('demo-placeholder');
+        const result = document.getElementById('demo-result');
+        const loading = document.getElementById('demo-loading');
+
+        btn.disabled = true;
+        btn.classList.add('opacity-50');
+        placeholder.classList.add('hidden');
+        result.classList.add('hidden');
+        loading.classList.remove('hidden');
+
+        try {
+            const resp = await fetch('/demo');
+            const data = await resp.json();
+            const steps = data.steps;
+
+            result.innerHTML = `
+                <!-- Step 1 -->
+                <div class="rounded-lg border border-gray-100 p-4">
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="w-6 h-6 rounded-full bg-primary-100 text-primary-700 text-xs font-bold flex items-center justify-center">1</span>
+                        <span class="text-sm font-semibold text-gray-900">Call Received</span>
+                    </div>
+                    <p class="text-xs text-gray-500 ml-8">${steps['1_call_received'].caller.caller_name} called about ${steps['1_call_received'].caller.service_type} (ZIP ${steps['1_call_received'].caller.zip_code})</p>
+                </div>
+                <!-- Step 2 -->
+                <div class="rounded-lg border border-gray-100 p-4">
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="w-6 h-6 rounded-full bg-primary-100 text-primary-700 text-xs font-bold flex items-center justify-center">2</span>
+                        <span class="text-sm font-semibold text-gray-900">Aria Called Back</span>
+                    </div>
+                    <p class="text-xs text-gray-500 ml-8">Call ID: <code class="bg-gray-100 px-1 rounded">${steps['2_bland_ai_triggered'].call_id}</code></p>
+                </div>
+                <!-- Step 3 -->
+                <div class="rounded-lg border border-gray-100 p-4">
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="w-6 h-6 rounded-full bg-accent-100 text-accent-700 text-xs font-bold flex items-center justify-center">3</span>
+                        <span class="text-sm font-semibold text-gray-900">Conversation (${steps['3_voice_conversation'].duration_seconds}s)</span>
+                        <span class="ml-auto inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-accent-50 text-accent-700">${steps['3_voice_conversation'].outcome}</span>
+                    </div>
+                    <div class="ml-8 space-y-2 max-h-48 overflow-y-auto">
+                        ${steps['3_voice_conversation'].transcript.map(t => `
+                            <div class="text-xs">
+                                <span class="font-semibold ${t.speaker === 'aria' ? 'text-primary-600' : 'text-gray-700'}">${t.speaker === 'aria' ? 'Aria' : 'Caller'}:</span>
+                                <span class="text-gray-600">${t.text}</span>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                <!-- Step 4 -->
+                <div class="rounded-lg border-2 border-accent-200 bg-accent-50/50 p-4">
+                    <div class="flex items-center gap-2 mb-2">
+                        <span class="w-6 h-6 rounded-full bg-accent-500 text-white text-xs font-bold flex items-center justify-center">4</span>
+                        <span class="text-sm font-semibold text-gray-900">Booked in ServiceTitan</span>
+                    </div>
+                    <div class="ml-8 grid grid-cols-2 gap-2 text-xs">
+                        <div><span class="text-gray-500">Confirmation:</span> <span class="font-semibold text-gray-900">${steps['4_appointment_booked'].confirmation_number}</span></div>
+                        <div><span class="text-gray-500">Technician:</span> <span class="font-semibold text-gray-900">${steps['4_appointment_booked'].technician}</span></div>
+                        <div class="col-span-2"><span class="text-gray-500">Appointment:</span> <span class="font-semibold text-gray-900">${steps['4_appointment_booked'].appointment_time}</span></div>
+                    </div>
+                </div>
+            `;
+            loading.classList.add('hidden');
+            result.classList.remove('hidden');
+
+            // Refresh stats after demo adds a call to the log
+            setTimeout(() => location.reload(), 1500);
+        } catch (err) {
+            loading.classList.add('hidden');
+            result.innerHTML = `<div class="text-sm text-red-600 text-center py-4">Error running demo: ${err.message}</div>`;
+            result.classList.remove('hidden');
+        } finally {
+            btn.disabled = false;
+            btn.classList.remove('opacity-50');
+        }
+    }
+    </script>
+</body>
+</html>

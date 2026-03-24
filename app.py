@@ -12,13 +12,18 @@ Endpoints:
     GET  /dashboard        — JSON summary of today's call activity
     GET  /demo             — Runs the full mock flow end-to-end
     GET  /health           — Status check
+    GET  /admin/login      — Admin login page
+    POST /admin/login      — Authenticate admin
+    GET  /admin/dashboard  — Admin dashboard with live stats
+    GET  /admin/logout     — End admin session
 """
 
+import functools
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
 import bland_ai
 import servicetitan_client as st
@@ -30,6 +35,28 @@ load_dotenv()  # read .env into os.environ
 
 app = Flask(__name__)
 app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-fallback-key")
+
+# Session cookie lasts 24 hours
+app.permanent_session_lifetime = timedelta(hours=24)
+
+# ---------------------------------------------------------------------------
+# Hardcoded admin credentials (swap for database lookup in production)
+# ---------------------------------------------------------------------------
+ADMIN_USERNAME = "admin"
+ADMIN_PASSWORD = "callflowai123"
+
+
+# ---------------------------------------------------------------------------
+# Auth helper — decorator that protects /admin/* routes
+# ---------------------------------------------------------------------------
+def login_required(view_func):
+    """Redirect to /admin/login if the user is not authenticated."""
+    @functools.wraps(view_func)
+    def wrapped(*args, **kwargs):
+        if not session.get("logged_in"):
+            return redirect(url_for("admin_login"))
+        return view_func(*args, **kwargs)
+    return wrapped
 
 # ---------------------------------------------------------------------------
 # In-memory call log (replaced by a database in production)
@@ -265,6 +292,80 @@ def dashboard():
         "calls_in_progress": len(in_progress),
         "calls": todays_calls,
     }), 200
+
+
+# ---------------------------------------------------------------------------
+# GET/POST /admin/login — Admin authentication
+# ---------------------------------------------------------------------------
+@app.route("/admin/login", methods=["GET", "POST"])
+def admin_login():
+    """
+    GET  — Render the login form.
+    POST — Validate credentials and create a session.
+
+    On successful login, sets session["logged_in"] = True and redirects
+    to /admin/dashboard. Sessions are marked permanent so the cookie
+    lasts 24 hours (configured via app.permanent_session_lifetime).
+    """
+    if request.method == "GET":
+        # Already logged in — skip the form
+        if session.get("logged_in"):
+            return redirect(url_for("admin_dashboard"))
+        return render_template("login.html", error=None)
+
+    # POST — check credentials
+    username = request.form.get("username", "")
+    password = request.form.get("password", "")
+
+    if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+        session.permanent = True  # use the 24-hour lifetime
+        session["logged_in"] = True
+        session["login_time"] = datetime.now().isoformat()
+        return redirect(url_for("admin_dashboard"))
+
+    return render_template("login.html", error="Invalid username or password."), 401
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/dashboard — Protected admin dashboard
+# ---------------------------------------------------------------------------
+@app.route("/admin/dashboard", methods=["GET"])
+@login_required
+def admin_dashboard():
+    """
+    Renders the admin dashboard with live stats pulled from the
+    in-memory call_log: total calls, appointments booked, conversion
+    rate, and the full call list for today.
+    """
+    today = datetime.now().date().isoformat()
+
+    todays_calls = [
+        c for c in call_log if c["timestamp"].startswith(today)
+    ]
+    booked = [c for c in todays_calls if c["status"] == "booked"]
+    missed = [c for c in todays_calls if c["status"] in ("missed", "not_interested")]
+    total = len(todays_calls)
+    conversion = round((len(booked) / total) * 100) if total > 0 else 0
+
+    return render_template(
+        "admin_dashboard.html",
+        date=today,
+        total_calls=total,
+        appointments_booked=len(booked),
+        calls_missed=len(missed),
+        conversion_rate=conversion,
+        calls=todays_calls,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/logout — End the admin session
+# ---------------------------------------------------------------------------
+@app.route("/admin/logout", methods=["GET"])
+def admin_logout():
+    """Clear the session and redirect back to the login page."""
+    session.clear()
+    return redirect(url_for("admin_login"))
 
 
 # ---------------------------------------------------------------------------
