@@ -434,6 +434,14 @@ def run_mock_demo() -> dict:
         # where she books Jane Doe for HVAC Repair on March 25th at 10 AM.
         call_summary = get_call_summary(bland_result["call_id"])
 
+        # Job description extracted from Aria's conversation with the caller.
+        # In production, Bland AI's variable extraction would pull this
+        # automatically from the transcript.
+        job_description = (
+            "Furnace making loud rattling noise, heat not working properly. "
+            "Customer reports issue started this morning."
+        )
+
         # -- Step 4: Book the appointment in ServiceTitan --------------------
         # create_booking pushes the job into ServiceTitan's dispatch board.
         # In mock mode it returns a realistic confirmation with ST-XXXXXXXX.
@@ -443,6 +451,7 @@ def run_mock_demo() -> dict:
             service_type=call_summary["service_requested"],
             zip_code=call_data["zip_code"],
             appointment_time=call_summary["appointment_time"],
+            job_description=job_description,
         )
 
         # -- Step 5: Assemble the full pipeline summary ----------------------
@@ -482,6 +491,7 @@ def run_mock_demo() -> dict:
                     "confirmation_number": booking.get("confirmation_number"),
                     "appointment_time": call_summary["appointment_time"],
                     "technician": booking.get("technician"),
+                    "job_description": job_description,
                 },
             },
         }

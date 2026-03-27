@@ -15,11 +15,13 @@ Endpoints:
     GET  /admin/login      — Admin login page
     POST /admin/login      — Authenticate admin
     GET  /admin/dashboard  — Admin dashboard with live stats
+    GET  /admin/calls/<id> — Call detail view with transcript
     GET  /admin/logout     — End admin session
 """
 
 import functools
 import os
+import uuid
 from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
@@ -111,6 +113,7 @@ def incoming_call():
     # --- Log the call as "in_progress" — it will be updated when Bland AI
     #     posts back to /bland-webhook with the outcome ---------------------
     call_log.append({
+        "call_id": uuid.uuid4().hex[:10],
         "caller_name": caller_name,
         "phone_number": phone_number,
         "service_type": service_type,
@@ -173,6 +176,7 @@ def bland_webhook():
         else:
             # Webhook arrived before /incoming-call (race), or standalone test
             call_log.append({
+                "call_id": uuid.uuid4().hex[:10],
                 "caller_name": call_data["caller_name"],
                 "phone_number": call_data["phone_number"],
                 "service_type": call_data["service_type"],
@@ -223,10 +227,12 @@ def demo():
     # a single dict summarising every step.
     result = bland_ai.run_mock_demo()
 
-    # Log the demo call so it shows up on the /dashboard endpoint
+    # Log the demo call so it shows up on the /admin/dashboard
     step4 = result["steps"]["4_appointment_booked"]
     step1 = result["steps"]["1_call_received"]
+    step3 = result["steps"]["3_voice_conversation"]
     call_log.append({
+        "call_id": uuid.uuid4().hex[:10],
         "caller_name": step1["caller"]["caller_name"],
         "phone_number": step1["caller"]["phone_number"],
         "service_type": step1["caller"]["service_type"],
@@ -235,6 +241,8 @@ def demo():
         "status": "booked",
         "booking": step4["servicetitan_booking"],
         "bland_call_id": result["steps"]["2_bland_ai_triggered"]["call_id"],
+        "job_description": step4.get("job_description", ""),
+        "transcript": step3.get("transcript", []),
     })
 
     return jsonify(result), 200
@@ -356,6 +364,23 @@ def admin_dashboard():
         conversion_rate=conversion,
         calls=todays_calls,
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /admin/calls/<call_id> — Call detail view
+# ---------------------------------------------------------------------------
+@app.route("/admin/calls/<call_id>", methods=["GET"])
+@login_required
+def call_detail(call_id):
+    """
+    Renders a detailed view for a single call, looked up by its call_id.
+    Shows full customer info, booking details, job description, and the
+    complete Aria conversation transcript in chat bubble format.
+    """
+    call = next((c for c in call_log if c.get("call_id") == call_id), None)
+    if not call:
+        return redirect(url_for("admin_dashboard"))
+    return render_template("call_detail.html", call=call)
 
 
 # ---------------------------------------------------------------------------
