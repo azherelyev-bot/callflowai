@@ -6,8 +6,7 @@ Run with:
     flask run --debug    (auto-reload on file changes)
 
 Endpoints:
-    POST /incoming-call    — Webhook: receives call data, triggers Bland AI
-    POST /bland-webhook    — Webhook: Bland AI posts here when a call ends
+    POST /vapi/webhook     — Webhook: Vapi posts here for call events
     GET  /available-slots  — Returns the next 3 open appointment windows
     GET  /dashboard        — JSON summary of today's call activity
     GET  /demo             — Runs the full mock flow end-to-end
@@ -20,6 +19,7 @@ Endpoints:
 """
 
 import functools
+import logging
 import os
 import uuid
 from datetime import datetime, timedelta
@@ -27,8 +27,9 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
-import bland_ai
 import servicetitan_client as st
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Bootstrap
@@ -64,144 +65,94 @@ def login_required(view_func):
 # In-memory call log (replaced by a database in production)
 # ---------------------------------------------------------------------------
 # Each entry: {caller_name, phone_number, service_type, zip_code,
-#              timestamp, status ("booked" | "missed"), booking, bland_call_id}
+#              timestamp, status ("booked" | "completed" | "missed"), booking, ...}
 call_log: list[dict] = []
 
 
 # ---------------------------------------------------------------------------
-# POST /incoming-call — Webhook for incoming calls
+# POST /vapi/webhook — Vapi sends call events here
 # ---------------------------------------------------------------------------
-@app.route("/incoming-call", methods=["POST"])
-def incoming_call():
+@app.route("/vapi/webhook", methods=["POST"])
+def vapi_webhook():
     """
-    Receives a POST with incoming call data, then:
-      1. Logs the call
-      2. Triggers a Bland AI callback so Aria can qualify the lead
-      3. Returns the Bland AI call ID for tracking
+    Webhook endpoint that Vapi POSTs to for call lifecycle events.
 
-    Expected JSON body:
-        {
-            "caller_name":   "Jane Doe",
-            "phone_number":  "555-123-4567",
-            "service_type":  "HVAC Repair",
-            "zip_code":      "37209"
-        }
-    """
-    data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "Request body must be JSON"}), 400
+    We handle "end-of-call-report" to extract caller info, transcript, and
+    summary and save as a call log entry. All other event types are
+    acknowledged with {"status": "ok"}.
 
-    # --- Validate required fields -------------------------------------------
-    required = ["caller_name", "phone_number", "service_type", "zip_code"]
-    missing = [f for f in required if not data.get(f)]
-    if missing:
-        return jsonify({"error": f"Missing fields: {', '.join(missing)}"}), 400
-
-    caller_name = data["caller_name"]
-    phone_number = data["phone_number"]
-    service_type = data["service_type"]
-    zip_code = data["zip_code"]
-
-    # --- Trigger Bland AI to call the customer back -------------------------
-    bland_result = bland_ai.handle_inbound_call(
-        caller_name=caller_name,
-        phone_number=phone_number,
-        service_type=service_type,
-        zip_code=zip_code,
-    )
-
-    # --- Log the call as "in_progress" — it will be updated when Bland AI
-    #     posts back to /bland-webhook with the outcome ---------------------
-    call_log.append({
-        "call_id": uuid.uuid4().hex[:10],
-        "caller_name": caller_name,
-        "phone_number": phone_number,
-        "service_type": service_type,
-        "zip_code": zip_code,
-        "timestamp": datetime.now().isoformat(),
-        "status": "in_progress",
-        "booking": None,
-        "bland_call_id": bland_result.get("call_id"),
-    })
-
-    return jsonify({
-        "status": "call_initiated",
-        "message": "Aria is calling the customer back now.",
-        "bland_ai": bland_result,
-    }), 201
-
-
-# ---------------------------------------------------------------------------
-# POST /bland-webhook — Bland AI calls this when a voice call ends
-# ---------------------------------------------------------------------------
-@app.route("/bland-webhook", methods=["POST"])
-def bland_webhook():
-    """
-    Webhook endpoint that Bland AI POSTs to when a call completes.
-
-    Bland AI sends the full transcript, extracted variables (name, address,
-    appointment time), and call metadata. We parse that data and — if the
-    caller booked — create the appointment in ServiceTitan automatically.
-
-    This is the bridge between the voice conversation and the booking system.
+    Vapi event types include:
+        - assistant-request, function-call, status-update,
+          end-of-call-report, hang, speech-update, transcript, etc.
     """
     payload = request.get_json(silent=True)
     if not payload:
-        return jsonify({"error": "Request body must be JSON"}), 400
+        return jsonify({"status": "ok"}), 200
 
-    # --- Parse the Bland AI webhook payload ---------------------------------
-    call_data = bland_ai.parse_webhook_payload(payload)
+    message = payload.get("message", {})
+    event_type = message.get("type", "")
 
-    # --- Find the matching call_log entry so we can update it ---------------
-    call_id = call_data.get("call_id")
-    log_entry = next(
-        (c for c in call_log if c.get("bland_call_id") == call_id),
-        None,
-    )
+    logger.info("Vapi webhook event: %s", event_type)
 
-    # --- If the caller booked, create the job in ServiceTitan ---------------
-    if call_data["outcome"] == "booked":
-        booking = st.create_booking(
-            caller_name=call_data["caller_name"],
-            phone_number=call_data["phone_number"],
-            service_type=call_data["service_type"],
-            zip_code=call_data["zip_code"],
-            appointment_time=call_data.get("appointment_time"),
-        )
+    if event_type == "end-of-call-report":
+        _handle_end_of_call_report(message)
 
-        # Update the in-memory log entry
-        if log_entry:
-            log_entry["status"] = "booked"
-            log_entry["booking"] = booking
-        else:
-            # Webhook arrived before /incoming-call (race), or standalone test
-            call_log.append({
-                "call_id": uuid.uuid4().hex[:10],
-                "caller_name": call_data["caller_name"],
-                "phone_number": call_data["phone_number"],
-                "service_type": call_data["service_type"],
-                "zip_code": call_data["zip_code"],
-                "timestamp": datetime.now().isoformat(),
-                "status": "booked",
-                "booking": booking,
-                "bland_call_id": call_id,
+    return jsonify({"status": "ok"}), 200
+
+
+def _handle_end_of_call_report(message: dict):
+    """Parse an end-of-call-report event and save it to the call log."""
+    call_obj = message.get("call", {})
+    customer = call_obj.get("customer", {})
+
+    # Caller phone number — Vapi stores it on the customer object
+    phone_number = customer.get("number", "Unknown")
+
+    # Transcript: Vapi sends a list of {role, message} turns
+    raw_transcript = message.get("transcript", "")
+    transcript = []
+    if isinstance(raw_transcript, list):
+        for turn in raw_transcript:
+            transcript.append({
+                "speaker": "aria" if turn.get("role") == "assistant" else "caller",
+                "text": turn.get("message", turn.get("content", "")),
             })
+    elif isinstance(raw_transcript, str) and raw_transcript:
+        transcript.append({"speaker": "system", "text": raw_transcript})
 
-        return jsonify({
-            "status": "booked",
-            "booking": booking,
-            "call_summary": call_data,
-        }), 200
+    summary = message.get("summary", "")
+    ended_reason = message.get("endedReason", "")
+    recording_url = message.get("recordingUrl", "")
+    duration = message.get("durationSeconds", 0)
 
-    # --- Not booked (caller declined or no answer) --------------------------
-    status = "missed" if call_data["outcome"] == "no_answer" else "not_interested"
-    if log_entry:
-        log_entry["status"] = status
+    # Try to extract a caller name from the summary or transcript
+    caller_name = customer.get("name", "Unknown Caller")
 
-    return jsonify({
+    # Determine status — if the summary mentions booking/appointment, mark booked
+    status = "completed"
+    if any(kw in summary.lower() for kw in ["booked", "appointment", "scheduled"]):
+        status = "booked"
+    elif ended_reason in ("customer-ended-call", "assistant-ended-call"):
+        status = "completed"
+    elif ended_reason in ("no-answer", "busy", "voicemail"):
+        status = "missed"
+
+    call_log.append({
+        "call_id": uuid.uuid4().hex[:10],
+        "vapi_call_id": call_obj.get("id", ""),
+        "caller_name": caller_name,
+        "phone_number": phone_number,
+        "service_type": "",
+        "zip_code": "",
+        "timestamp": call_obj.get("startedAt", datetime.now().isoformat()),
         "status": status,
-        "call_summary": call_data,
-    }), 200
+        "booking": None,
+        "summary": summary,
+        "transcript": transcript,
+        "recording_url": recording_url,
+        "duration_seconds": duration,
+        "ended_reason": ended_reason,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -210,42 +161,94 @@ def bland_webhook():
 @app.route("/demo", methods=["GET"])
 def demo():
     """
-    Simulates the complete CallFlow AI pipeline in a single request:
+    Simulates the complete CallFlow AI pipeline in a single request.
 
-        1. Incoming call received from Jane Doe (HVAC Repair, ZIP 37209)
-        2. Bland AI call triggered — Aria calls the customer back
-        3. Aria qualifies the lead, confirms the address, picks a slot
-        4. Call ends — webhook fires with transcript + extracted data
-        5. Appointment booked in ServiceTitan
-        6. Returns a clean JSON summary of every step
-
-    All orchestration lives in bland_ai.run_mock_demo() so the same
-    flow can be triggered from tests or CLI scripts without Flask.
+    Creates a mock call log entry with a realistic Aria transcript so the
+    admin dashboard has data to display without requiring a live Vapi call.
     """
-    # run_mock_demo() handles the full pipeline: incoming call → Bland AI
-    # callback → voice conversation → ServiceTitan booking — and returns
-    # a single dict summarising every step.
-    result = bland_ai.run_mock_demo()
+    now = datetime.now().isoformat()
 
-    # Log the demo call so it shows up on the /admin/dashboard
-    step4 = result["steps"]["4_appointment_booked"]
-    step1 = result["steps"]["1_call_received"]
-    step3 = result["steps"]["3_voice_conversation"]
-    call_log.append({
+    mock_transcript = [
+        {"speaker": "aria", "text": (
+            "Hi, this is Aria, your CallFlowAI assistant for Nashville Comfort "
+            "HVAC. I saw you called about HVAC Repair. I'd love to help get "
+            "you scheduled today."
+        )},
+        {"speaker": "caller", "text": (
+            "Oh great, yes. My furnace started making a loud rattling noise "
+            "this morning and the heat isn't coming on properly."
+        )},
+        {"speaker": "aria", "text": (
+            "I'm sorry to hear that — we'll get that taken care of for you. "
+            "Can I get the address where you need the service?"
+        )},
+        {"speaker": "caller", "text": "Sure, it's 412 Oak Street, Nashville, 37209."},
+        {"speaker": "aria", "text": (
+            "Perfect, 412 Oak Street, 37209. Let me check what we have "
+            "available for you... I have an opening tomorrow at 10:00 AM. "
+            "Does that work?"
+        )},
+        {"speaker": "caller", "text": "That works perfectly."},
+        {"speaker": "aria", "text": (
+            "Wonderful! I've got you booked for HVAC Repair tomorrow at "
+            "10:00 AM. You'll receive a confirmation shortly. Is there "
+            "anything else I can help you with?"
+        )},
+        {"speaker": "caller", "text": "No, that's it. Thank you so much!"},
+        {"speaker": "aria", "text": (
+            "Great, you're all set! A technician from Nashville Comfort HVAC "
+            "will be there tomorrow at 10 AM. Have a wonderful day!"
+        )},
+    ]
+
+    # Force mock mode for ServiceTitan booking
+    original_mock = os.environ.get("MOCK_MODE")
+    os.environ["MOCK_MODE"] = "true"
+    try:
+        booking = st.create_booking(
+            caller_name="Jane Doe",
+            phone_number="555-123-4567",
+            service_type="HVAC Repair",
+            zip_code="37209",
+            appointment_time="2025-03-25T10:00:00",
+            job_description=(
+                "Furnace making loud rattling noise, heat not working properly. "
+                "Customer reports issue started this morning."
+            ),
+        )
+    finally:
+        if original_mock is None:
+            os.environ.pop("MOCK_MODE", None)
+        else:
+            os.environ["MOCK_MODE"] = original_mock
+
+    call_entry = {
         "call_id": uuid.uuid4().hex[:10],
-        "caller_name": step1["caller"]["caller_name"],
-        "phone_number": step1["caller"]["phone_number"],
-        "service_type": step1["caller"]["service_type"],
-        "zip_code": step1["caller"]["zip_code"],
-        "timestamp": step1["timestamp"],
+        "caller_name": "Jane Doe",
+        "phone_number": "555-123-4567",
+        "service_type": "HVAC Repair",
+        "zip_code": "37209",
+        "timestamp": now,
         "status": "booked",
-        "booking": step4["servicetitan_booking"],
-        "bland_call_id": result["steps"]["2_bland_ai_triggered"]["call_id"],
-        "job_description": step4.get("job_description", ""),
-        "transcript": step3.get("transcript", []),
-    })
+        "booking": booking,
+        "summary": (
+            "Jane Doe called about HVAC Repair. Furnace making loud rattling "
+            "noise. Appointment booked for tomorrow at 10:00 AM."
+        ),
+        "transcript": mock_transcript,
+        "duration_seconds": 127,
+    }
+    call_log.append(call_entry)
 
-    return jsonify(result), 200
+    return jsonify({
+        "demo": True,
+        "pipeline_summary": (
+            "Complete flow: call received → Aria qualified lead → "
+            "appointment booked in ServiceTitan"
+        ),
+        "call": call_entry,
+        "booking": booking,
+    }), 200
 
 
 # ---------------------------------------------------------------------------
@@ -401,7 +404,7 @@ def health():
     return jsonify({
         "status": "ok",
         "mock_mode": os.getenv("MOCK_MODE", "false").lower() == "true",
-        "bland_ai_configured": bool(os.getenv("BLAND_AI_API_KEY")),
+        "vapi_configured": bool(os.getenv("VAPI_API_KEY")),
     }), 200
 
 
