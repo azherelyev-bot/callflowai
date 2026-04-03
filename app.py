@@ -21,13 +21,13 @@ Endpoints:
 import functools
 import logging
 import os
-import uuid
 from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
 from flask import Flask, jsonify, redirect, render_template, request, session, url_for
 
 import servicetitan_client as st
+from models import Booking, Call, db
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +41,22 @@ app.secret_key = os.getenv("FLASK_SECRET_KEY", "dev-fallback-key")
 
 # Session cookie lasts 24 hours
 app.permanent_session_lifetime = timedelta(hours=24)
+
+# ---------------------------------------------------------------------------
+# Database configuration
+# ---------------------------------------------------------------------------
+database_url = os.getenv("DATABASE_URL", "sqlite:///callflowai.db")
+# Railway/Heroku provide postgres:// but SQLAlchemy 2.x requires postgresql://
+if database_url.startswith("postgres://"):
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
+
+app.config["SQLALCHEMY_DATABASE_URI"] = database_url
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+
+db.init_app(app)
+
+with app.app_context():
+    db.create_all()
 
 # ---------------------------------------------------------------------------
 # Hardcoded admin credentials (swap for database lookup in production)
@@ -61,13 +77,6 @@ def login_required(view_func):
         return view_func(*args, **kwargs)
     return wrapped
 
-# ---------------------------------------------------------------------------
-# In-memory call log (replaced by a database in production)
-# ---------------------------------------------------------------------------
-# Each entry: {caller_name, phone_number, service_type, zip_code,
-#              timestamp, status ("booked" | "completed" | "missed"), booking, ...}
-call_log: list[dict] = []
-
 
 # ---------------------------------------------------------------------------
 # POST /vapi/webhook — Vapi sends call events here
@@ -80,10 +89,6 @@ def vapi_webhook():
     We handle "end-of-call-report" to extract caller info, transcript, and
     summary and save as a call log entry. All other event types are
     acknowledged with {"status": "ok"}.
-
-    Vapi event types include:
-        - assistant-request, function-call, status-update,
-          end-of-call-report, hang, speech-update, transcript, etc.
     """
     payload = request.get_json(silent=True)
     if not payload:
@@ -101,11 +106,10 @@ def vapi_webhook():
 
 
 def _handle_end_of_call_report(message: dict):
-    """Parse an end-of-call-report event and save it to the call log."""
+    """Parse an end-of-call-report event and save it to the database."""
     call_obj = message.get("call", {})
     customer = call_obj.get("customer", {})
 
-    # Caller phone number — Vapi stores it on the customer object
     phone_number = customer.get("number", "Unknown")
 
     # Transcript: Vapi sends a list of {role, message} turns
@@ -125,10 +129,9 @@ def _handle_end_of_call_report(message: dict):
     recording_url = message.get("recordingUrl", "")
     duration = message.get("durationSeconds", 0)
 
-    # Try to extract a caller name from the summary or transcript
     caller_name = customer.get("name", "Unknown Caller")
 
-    # Determine status — if the summary mentions booking/appointment, mark booked
+    # Determine status
     status = "completed"
     if any(kw in summary.lower() for kw in ["booked", "appointment", "scheduled"]):
         status = "booked"
@@ -137,22 +140,27 @@ def _handle_end_of_call_report(message: dict):
     elif ended_reason in ("no-answer", "busy", "voicemail"):
         status = "missed"
 
-    call_log.append({
-        "call_id": uuid.uuid4().hex[:10],
-        "vapi_call_id": call_obj.get("id", ""),
-        "caller_name": caller_name,
-        "phone_number": phone_number,
-        "service_type": "",
-        "zip_code": "",
-        "timestamp": call_obj.get("startedAt", datetime.now().isoformat()),
-        "status": status,
-        "booking": None,
-        "summary": summary,
-        "transcript": transcript,
-        "recording_url": recording_url,
-        "duration_seconds": duration,
-        "ended_reason": ended_reason,
-    })
+    # Parse timestamp
+    started_at = call_obj.get("startedAt", "")
+    try:
+        timestamp = datetime.fromisoformat(started_at.replace("Z", "+00:00")) if started_at else datetime.utcnow()
+    except (ValueError, AttributeError):
+        timestamp = datetime.utcnow()
+
+    call = Call(
+        vapi_call_id=call_obj.get("id", ""),
+        caller_name=caller_name,
+        phone_number=phone_number,
+        timestamp=timestamp,
+        status=status,
+        summary=summary,
+        transcript=transcript,
+        recording_url=recording_url,
+        duration_seconds=duration,
+        ended_reason=ended_reason,
+    )
+    db.session.add(call)
+    db.session.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -166,7 +174,7 @@ def demo():
     Creates a mock call log entry with a realistic Aria transcript so the
     admin dashboard has data to display without requiring a live Vapi call.
     """
-    now = datetime.now().isoformat()
+    now = datetime.utcnow()
 
     mock_transcript = [
         {"speaker": "aria", "text": (
@@ -205,16 +213,12 @@ def demo():
     original_mock = os.environ.get("MOCK_MODE")
     os.environ["MOCK_MODE"] = "true"
     try:
-        booking = st.create_booking(
+        booking_data = st.create_booking(
             caller_name="Jane Doe",
             phone_number="555-123-4567",
             service_type="HVAC Repair",
             zip_code="37209",
             appointment_time="2025-03-25T10:00:00",
-            job_description=(
-                "Furnace making loud rattling noise, heat not working properly. "
-                "Customer reports issue started this morning."
-            ),
         )
     finally:
         if original_mock is None:
@@ -222,23 +226,47 @@ def demo():
         else:
             os.environ["MOCK_MODE"] = original_mock
 
-    call_entry = {
-        "call_id": uuid.uuid4().hex[:10],
-        "caller_name": "Jane Doe",
-        "phone_number": "555-123-4567",
-        "service_type": "HVAC Repair",
-        "zip_code": "37209",
-        "timestamp": now,
-        "status": "booked",
-        "booking": booking,
-        "summary": (
+    # Create Call record
+    call = Call(
+        caller_name="Jane Doe",
+        phone_number="555-123-4567",
+        service_type="HVAC Repair",
+        zip_code="37209",
+        timestamp=now,
+        status="booked",
+        summary=(
             "Jane Doe called about HVAC Repair. Furnace making loud rattling "
             "noise. Appointment booked for tomorrow at 10:00 AM."
         ),
-        "transcript": mock_transcript,
-        "duration_seconds": 127,
-    }
-    call_log.append(call_entry)
+        transcript=mock_transcript,
+        duration_seconds=127,
+    )
+    db.session.add(call)
+    db.session.flush()  # get the call.id before creating booking
+
+    # Parse appointment time from booking data
+    appt_time = None
+    if booking_data.get("appointment_time"):
+        try:
+            appt_time = datetime.fromisoformat(booking_data["appointment_time"])
+        except (ValueError, TypeError):
+            pass
+
+    booking = Booking(
+        id=booking_data.get("id", ""),
+        call_id=call.id,
+        status=booking_data.get("status", "Scheduled"),
+        customer=booking_data.get("customer", "Jane Doe"),
+        phone=booking_data.get("phone", "555-123-4567"),
+        service_type=booking_data.get("service_type", "HVAC Repair"),
+        zip_code=booking_data.get("zip_code", "37209"),
+        appointment_time=appt_time,
+        technician=booking_data.get("technician", ""),
+        confirmation_number=booking_data.get("confirmation_number", ""),
+        job_description=booking_data.get("job_description", ""),
+    )
+    db.session.add(booking)
+    db.session.commit()
 
     return jsonify({
         "demo": True,
@@ -246,8 +274,8 @@ def demo():
             "Complete flow: call received → Aria qualified lead → "
             "appointment booked in ServiceTitan"
         ),
-        "call": call_entry,
-        "booking": booking,
+        "call": call.to_dict(),
+        "booking": booking.to_dict(),
     }), 200
 
 
@@ -285,23 +313,25 @@ def dashboard():
         - calls missed (no availability / not booked)
         - list of today's call records
     """
-    today = datetime.now().date().isoformat()
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow_start = today_start + timedelta(days=1)
 
-    todays_calls = [
-        c for c in call_log
-        if c["timestamp"].startswith(today)
-    ]
-    booked = [c for c in todays_calls if c["status"] == "booked"]
-    missed = [c for c in todays_calls if c["status"] in ("missed", "not_interested")]
-    in_progress = [c for c in todays_calls if c["status"] == "in_progress"]
+    todays_calls = Call.query.filter(
+        Call.timestamp >= today_start,
+        Call.timestamp < tomorrow_start,
+    ).order_by(Call.timestamp.desc()).all()
+
+    booked = [c for c in todays_calls if c.status == "booked"]
+    missed = [c for c in todays_calls if c.status in ("missed", "not_interested")]
+    in_progress = [c for c in todays_calls if c.status == "in_progress"]
 
     return jsonify({
-        "date": today,
+        "date": today_start.date().isoformat(),
         "total_calls": len(todays_calls),
         "appointments_booked": len(booked),
         "calls_missed": len(missed),
         "calls_in_progress": len(in_progress),
-        "calls": todays_calls,
+        "calls": [c.to_dict() for c in todays_calls],
     }), 200
 
 
@@ -313,25 +343,19 @@ def admin_login():
     """
     GET  — Render the login form.
     POST — Validate credentials and create a session.
-
-    On successful login, sets session["logged_in"] = True and redirects
-    to /admin/dashboard. Sessions are marked permanent so the cookie
-    lasts 24 hours (configured via app.permanent_session_lifetime).
     """
     if request.method == "GET":
-        # Already logged in — skip the form
         if session.get("logged_in"):
             return redirect(url_for("admin_dashboard"))
         return render_template("login.html", error=None)
 
-    # POST — check credentials
     username = request.form.get("username", "")
     password = request.form.get("password", "")
 
     if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
-        session.permanent = True  # use the 24-hour lifetime
+        session.permanent = True
         session["logged_in"] = True
-        session["login_time"] = datetime.now().isoformat()
+        session["login_time"] = datetime.utcnow().isoformat()
         return redirect(url_for("admin_dashboard"))
 
     return render_template("login.html", error="Invalid username or password."), 401
@@ -344,28 +368,32 @@ def admin_login():
 @login_required
 def admin_dashboard():
     """
-    Renders the admin dashboard with live stats pulled from the
-    in-memory call_log: total calls, appointments booked, conversion
-    rate, and the full call list for today.
+    Renders the admin dashboard with live stats pulled from the database.
     """
-    today = datetime.now().date().isoformat()
+    today_start = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    tomorrow_start = today_start + timedelta(days=1)
 
-    todays_calls = [
-        c for c in call_log if c["timestamp"].startswith(today)
-    ]
-    booked = [c for c in todays_calls if c["status"] == "booked"]
-    missed = [c for c in todays_calls if c["status"] in ("missed", "not_interested")]
+    todays_calls = Call.query.filter(
+        Call.timestamp >= today_start,
+        Call.timestamp < tomorrow_start,
+    ).order_by(Call.timestamp.desc()).all()
+
+    booked = [c for c in todays_calls if c.status == "booked"]
+    missed = [c for c in todays_calls if c.status in ("missed", "not_interested")]
     total = len(todays_calls)
     conversion = round((len(booked) / total) * 100) if total > 0 else 0
 
+    # Convert to dicts for template compatibility
+    calls_dicts = [c.to_dict() for c in todays_calls]
+
     return render_template(
         "admin_dashboard.html",
-        date=today,
+        date=today_start.date().isoformat(),
         total_calls=total,
         appointments_booked=len(booked),
         calls_missed=len(missed),
         conversion_rate=conversion,
-        calls=todays_calls,
+        calls=calls_dicts,
     )
 
 
@@ -377,13 +405,11 @@ def admin_dashboard():
 def call_detail(call_id):
     """
     Renders a detailed view for a single call, looked up by its call_id.
-    Shows full customer info, booking details, job description, and the
-    complete Aria conversation transcript in chat bubble format.
     """
-    call = next((c for c in call_log if c.get("call_id") == call_id), None)
+    call = db.session.get(Call, call_id)
     if not call:
         return redirect(url_for("admin_dashboard"))
-    return render_template("call_detail.html", call=call)
+    return render_template("call_detail.html", call=call.to_dict())
 
 
 # ---------------------------------------------------------------------------
@@ -405,6 +431,7 @@ def health():
         "status": "ok",
         "mock_mode": os.getenv("MOCK_MODE", "false").lower() == "true",
         "vapi_configured": bool(os.getenv("VAPI_API_KEY")),
+        "database": app.config["SQLALCHEMY_DATABASE_URI"].split("://")[0],
     }), 200
 
 
